@@ -1087,12 +1087,15 @@ function guardarCadena(sucId, appId){
 /* Al abrir: lo que ya está en D1 manda; si está vacío, se siembra el plan */
 async function cargarDeD1(){
   const j = await api(D1);
-  if (Array.isArray(j.plan) && j.plan.length){
-    TAREAS = j.plan.map(deFilaPlan);
-  } else {
-    TAREAS = planBase();
-    guardarActividades(TAREAS);
-  }
+  const filas = Array.isArray(j.plan) ? j.plan : [];
+  // Lo que está en D1 manda, pero el plan base completa lo que falte: si una carga anterior
+  // no llegó entera, no se pierden las aplicaciones que no alcanzaron a subir.
+  const porId = new Map(planBase().map(t => [t.id, t]));
+  const enD1 = new Set();
+  filas.forEach(f => { porId.set(f.id, deFilaPlan(f)); enD1.add(f.id); });
+  TAREAS = [...porId.values()];
+  const faltan = TAREAS.filter(t => !enD1.has(t.id));
+  if (faltan.length) guardarActividades(faltan);
   ASIS = Array.isArray(j.asistentes) ? j.asistentes.map(deFilaAsis) : [];
   guardar(); guardarAsis();
 }
