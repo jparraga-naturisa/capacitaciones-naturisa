@@ -303,6 +303,7 @@ tr.secc b{ margin-left:8px; font-size:11px; }
       <input type="text" id="q" placeholder="Buscar sucursal…" oninput="render()">
     </div>
     <button class="btn ghost sm" onclick="hoyScroll()">Hoy</button>
+    <button class="btn sm" onclick="irA('cfg')" title="Poner o cambiar las fechas de cada sucursal">Poner fechas</button>
     <div class="spacer"></div>
   </div>
   <div class="card">
@@ -679,7 +680,7 @@ function render(){
     const sinFecha = TAREAS.length && !TAREAS.some(conFecha);
     left.innerHTML = `<div class="lhead"><span>Etapa</span></div>`;
     right.innerHTML = `<div class="vacio">${sinFecha
-      ? 'Todavía no hay fechas. Ponlas en <b>Configuración</b>: escribes el día de la capacitación de cada aplicación y el soporte y el seguimiento salen solos.'
+      ? 'Todavía no hay fechas.<br><button class="btn" style="margin-top:12px" onclick="irA(&quot;cfg&quot;)">Poner fechas</button><br><br>Escribes el día de la capacitación de cada aplicación y de ahí salen el soporte y el seguimiento.'
       : 'Nada coincide con la búsqueda.'}</div>`;
     return;
   }
