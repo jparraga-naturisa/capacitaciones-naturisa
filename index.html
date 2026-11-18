@@ -844,12 +844,13 @@ function cuerpoDetalle(m, vis){
     } else {
       const t = f.t, a = app(t.app), es = estado(t), hito = t.tipo === 'hito';
       const x1 = x(s2d(t.ini)), x2 = hito ? x1 + px : x(s2d(t.fin)) + px;
-      const sub = MODO === 'app'
-        ? `${esc(sucNom(t.suc))}${t.suc != null ? ' · ' + esc(sucCl(t.suc)) : ''}`
-        : ((t.etapa || 'cap') === 'cap' ? esc(pistaNom(pistaDe(t))) : esc(a.nom));
+      // El grupo ya dice la aplicación: la fila lleva la sucursal (o la pista, si se agrupa por sucursal)
+      const titulo = MODO === 'app' ? sucNom(t.suc) : (t.app ? pistaNom(pistaDe(t)) : t.nom);
+      const sub = MODO === 'app' ? (t.suc != null ? esc(sucCl(t.suc)) : '') : '';
+      const fechas = hito ? fmt(t.ini) : fmt(t.ini) + ' → ' + fmt(t.fin);
       lh += `<div class="lrow ${SEL === t.id ? 'sel' : ''}" onclick="abrir('${t.id}')" title="Clic para editar">
                <span class="ind"></span>
-               <span class="nm">${esc(t.nom)}<small>${sub} · ${hito ? fmt(t.ini) : fmt(t.ini) + ' → ' + fmt(t.fin)}</small></span>
+               <span class="nm">${esc(titulo)}<small>${sub ? sub + ' · ' : ''}${fechas}</small></span>
                <span class="pct">${hito ? '' : (t.pct||0) + '%'}</span></div>`;
       const etiq = t.suc != null && MODO !== 'suc' ? sucNom(t.suc) : t.nom;
       if (hito){
