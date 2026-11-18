@@ -119,7 +119,7 @@ body{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 .chd.med{ background:color-mix(in srgb, var(--c) 16%, #fff); }
 .chd.atr{ border-color:var(--danger); color:var(--danger); }
 .chd.drag{ opacity:.85; box-shadow:0 4px 10px rgba(0,0,0,.3); }
-.chd .cods{ line-height:1; white-space:nowrap; }
+.chd .cods{ line-height:1.08; text-align:center; }
 .lrow.eta .pill{ width:10px; height:10px; border-radius:3px; flex:0 0 auto; }
 .lrow.eta .pill.sop{ border-radius:3px; opacity:.6; transform:scale(.8); }
 .lrow.eta .pill.seg{ border-radius:50%; opacity:.6; transform:scale(.8); }
@@ -767,9 +767,16 @@ function cuerpoResumen(m, vis){
       const nivel = avg >= 100 ? 'ok' : avg > 0 ? 'med' : '';
       const atrasado = avg < 100 && lote.some(t => estado(t) === 'atr');
       const ancho = px - 2;
-      const texto = cods.join('·');
-      const txt = (texto.length * 5.6 + 6 <= ancho) ? texto
-                : (String(sucs.length).length * 6 <= ancho ? sucs.length : '');
+      // Solo la capacitación lleva texto: los códigos de las fincas de ese día, en varias
+      // líneas si no caben de corrido. El soporte y el seguimiento van en blanco.
+      let txt = '';
+      if (pi.etapa === 'cap'){
+        const porLinea = Math.max(1, Math.floor((ancho - 4) / 15));
+        const lineas = [];
+        for (let i = 0; i < cods.length; i += porLinea) lineas.push(esc(cods.slice(i, i + porLinea).join('·')));
+        txt = lineas.length <= 3 ? lineas.join('<br>')
+            : (String(sucs.length).length * 6 <= ancho ? String(sucs.length) : '');
+      }
       const detalle = sucs.map(id => {
         const suyas = lote.filter(t => t.suc === id);
         const hecho = suyas.filter(t => (t.pct||0) >= 100).length;
@@ -778,7 +785,7 @@ function cuerpoResumen(m, vis){
       fila += `<div class="chd ${nivel} ${atrasado ? 'atr' : ''} ${pi.tenue ? 'tenue' : ''}" data-ids="${lote.map(t => t.id).join(',')}"
                     style="left:${x(d) + 1}px;width:${ancho}px;--c:${pi.color}"
                     title="${esc(pi.nom)} · ${fmtL(d2s(d))}&#10;${esc(detalle)}">
-                 <span class="cods">${esc(String(txt))}</span></div>`;
+                 <span class="cods">${txt}</span></div>`;
     });
     rh += `<div class="rrow">${fila}</div>`;
   });
