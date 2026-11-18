@@ -603,11 +603,12 @@ function planBase(){
       // Sin fechas: las pone el usuario en Configuración y de ahí salen el soporte y el seguimiento
       const base = { app:a.id, suc:s.id, tipo:'tarea', pct:0, not:'', aud:cfg.aud, ini:'', fin:'' };
       const mods = a.mods && a.mods.length ? a.mods : [null];
-      mods.forEach(m => T.push({ ...base, mod:m ? m.id : null,
-        id:m ? `${a.id}-${m.id}-s${s.id}` : `${a.id}-s${s.id}`,
-        etapa:'cap', nom:etapaNom('cap'), resp:cfg.resp }));
-      T.push({ ...base, mod:null, id:`${a.id}-sop-s${s.id}`, etapa:'sop', nom:etapaNom('sop'), resp:'Sistemas' });
-      T.push({ ...base, mod:null, id:`${a.id}-seg-s${s.id}`, etapa:'seg', nom:etapaNom('seg'), resp:'Sistemas' });
+      mods.forEach(m => {
+        const pre = m ? `${a.id}-${m.id}` : a.id, mod = m ? m.id : null;
+        T.push({ ...base, mod, id:`${pre}-s${s.id}`,     etapa:'cap', nom:etapaNom('cap'), resp:cfg.resp });
+        T.push({ ...base, mod, id:`${pre}-sop-s${s.id}`, etapa:'sop', nom:etapaNom('sop'), resp:'Sistemas' });
+        T.push({ ...base, mod, id:`${pre}-seg-s${s.id}`, etapa:'seg', nom:etapaNom('seg'), resp:'Sistemas' });
+      });
     });
   });
   return T;
@@ -758,15 +759,11 @@ function cuerpoResumen(m, vis){
   // Una línea por pista de capacitación (módulo a módulo donde los hay), más el
   // soporte y el seguimiento de cada aplicación.
   const lineas = [];
-  APPS.forEach(a => {
-    pistas().filter(p => p.app === a.id).forEach(p => lineas.push({
-      nom:p.nom, sub:p.grupo ? `Capacitación · ${p.grupo}` : 'Capacitación',
-      color:p.color, tenue:false, etapa:'cap',
-      ts:vis.filter(t => (t.etapa || 'cap') === 'cap' && pistaDe(t) === p.key) }));
-    ['sop','seg'].forEach(k => lineas.push({
-      nom:etapaNom(k), sub:a.nom, color:a.color, tenue:true, etapa:k,
-      ts:vis.filter(t => (t.etapa || 'cap') === k && t.app === a.id) }));
-  });
+  pistas().forEach(p => ['cap','sop','seg'].forEach(k => lineas.push({
+    nom:k === 'cap' ? p.nom : etapaNom(k),
+    sub:k === 'cap' ? (p.grupo ? `Capacitación · ${p.grupo}` : 'Capacitación') : pistaNom(p.key),
+    color:p.color, tenue:k !== 'cap', etapa:k,
+    ts:vis.filter(t => (t.etapa || 'cap') === k && pistaDe(t) === p.key) })));
   // Actividades sueltas sin aplicación, si alguien las creó
   ['cap','sop','seg'].forEach(k => {
     const ts = vis.filter(t => (t.etapa || 'cap') === k && !t.app);
@@ -991,9 +988,9 @@ function finDrag(){
   const t = tarea(d.ids[0]);
   // si se movió una capacitación, el soporte se va al día siguiente
   const movidas = d.ids.map(i => tarea(i)).filter(Boolean);
-  movidas.filter(x => (x.etapa || 'cap') === 'cap').forEach(x => recalcCadena(x.suc, x.app));
+  movidas.filter(x => (x.etapa || 'cap') === 'cap').forEach(x => recalcCadena(x.suc, pistaDe(x)));
   guardar();
-  movidas.forEach(x => (x.etapa || 'cap') === 'cap' ? guardarCadena(x.suc, x.app) : guardarActividad(x));
+  movidas.forEach(x => (x.etapa || 'cap') === 'cap' ? guardarCadena(x.suc, pistaDe(x)) : guardarActividad(x));
   const sucs = [...new Set(d.ids.map(i => sucNom(tarea(i).suc)))];
   toast(d.ids.length > 1
     ? `${sucs.slice(0,3).join(', ')}${sucs.length > 3 ? '…' : ''} → ${fmt(t.ini)}`
@@ -1124,11 +1121,8 @@ const borrarVisitaD1 = (ced, fecha, lugar) =>
 const borrarActividadD1  = id => enviar({ m:'DELETE', url:`${D1}/plan?id=${encodeURIComponent(id)}` });
 
 /* La cadena de una aplicación se guarda completa: capacitación, soporte y seguimiento */
-function guardarCadena(sucId, appId){
-  guardarActividades([
-    TAREAS.find(t => t.suc === sucId && t.app === appId && (t.etapa || 'cap') === 'cap'),
-    tareaEtapa(sucId, 'sop', appId), tareaEtapa(sucId, 'seg', appId)
-  ]);
+function guardarCadena(sucId, pista){
+  guardarActividades([tareaDe(sucId, pista), tareaEtapa(sucId, 'sop', pista), tareaEtapa(sucId, 'seg', pista)]);
 }
 
 /* Al abrir: lo que ya está en D1 manda; si está vacío, se siembra el plan */
@@ -1144,12 +1138,15 @@ async function cargarDeD1(){
   // Combustible pasó a capacitarse módulo a módulo: la fila antigua sin módulo se retira
   // (si tenía fecha, se la queda el primer módulo para no perderla).
   const conMods = APPS.filter(a => a.mods && a.mods.length).map(a => a.id);
-  const viejas = TAREAS.filter(t => (t.etapa || 'cap') === 'cap' && !t.mod && conMods.includes(t.app));
+  const viejas = TAREAS.filter(t => !t.mod && conMods.includes(t.app));
   viejas.forEach(v => {
     if (conFecha(v)){
       const prim = pistas().find(p => p.app === v.app);
-      const dest = TAREAS.find(t => t.suc === v.suc && (t.etapa || 'cap') === 'cap' && pistaDe(t) === prim.key);
-      if (dest && !conFecha(dest)){ dest.ini = v.ini; dest.fin = v.fin; dest.pct = v.pct || 0; }
+      const dest = tareaEtapa(v.suc, v.etapa || 'cap', prim.key);
+      if (dest && !conFecha(dest)){
+        dest.ini = v.ini; dest.fin = v.fin; dest.pct = v.pct || 0;
+        if (v.manual) dest.manual = true;
+      }
     }
     TAREAS = TAREAS.filter(t => t.id !== v.id);
     if (enD1.has(v.id)) borrarActividadD1(v.id);
@@ -1170,12 +1167,13 @@ async function reintentarPendientes(){
 
 /* ══════════════ Fechas por sucursal ══════════════ */
 /* Capacitación de una aplicación en una sucursal (la primera, si hubiera varias) */
-function tareaDe(sucId, appId){
-  return TAREAS.find(t => t.suc === sucId && (t.etapa || 'cap') === 'cap' && t.app === appId);
+function tareaDe(sucId, pista){
+  return TAREAS.find(t => t.suc === sucId && (t.etapa || 'cap') === 'cap' && pistaDe(t) === pista);
 }
-function tareaEtapa(sucId, k, appId){
+/* La actividad de una etapa en una sucursal, para una pista (aplicación o módulo) */
+function tareaEtapa(sucId, k, pista){
   return TAREAS.find(t => t.suc === sucId && (t.etapa || 'cap') === k &&
-                          (appId === undefined || t.app === appId));
+                          (pista === undefined || pistaDe(t) === pista));
 }
 function claseFecha(t){
   if (!t) return '';
@@ -1192,14 +1190,13 @@ function pintarFechas(){
   const filas = lista.map(s => {
     // Una columna por aplicación: la fecha de capacitación se edita; soporte y seguimiento
     // se calculan solos y solo se muestran.
-    // Cada columna es una pista: la fecha de su capacitación. El soporte y el seguimiento
-    // son de la aplicación y salen bajo su primera pista; se calculan solos pero se pueden editar.
+    // Cada columna es una pista (aplicación o módulo) con su cadena: la fecha de la
+    // capacitación, y debajo el soporte y el seguimiento, que se calculan solos pero se editan.
     const celda = pi => {
-      const t = TAREAS.find(x => x.suc === s.id && (x.etapa || 'cap') === 'cap' && pistaDe(x) === pi.key);
+      const t = tareaDe(s.id, pi.key);
       if (!t) return `<td><span class="sub">—</span></td>`;
-      const primera = PS.find(x => x.app === pi.app).key === pi.key;
-      const sop = primera ? tareaEtapa(s.id, 'sop', pi.app) : null;
-      const seg = primera ? tareaEtapa(s.id, 'seg', pi.app) : null;
+      const sop = tareaEtapa(s.id, 'sop', pi.key);
+      const seg = tareaEtapa(s.id, 'seg', pi.key);
       const linea = (x, et) => !x ? ''
         : `<span class="calc ${claseFecha(x)} ${conFecha(x) ? '' : 'vacia'}">
              <input type="checkbox" class="hecho mini" ${(x.pct||0) >= 100 ? 'checked' : ''} ${conFecha(x) ? '' : 'disabled'}
@@ -1229,17 +1226,17 @@ function pintarFechas(){
 
 /* Cada aplicación va seguida en el campamento: capacitación → soporte (5 días) →
    seguimiento (5 días). Las dos últimas se calculan solas a partir de la capacitación. */
-function recalcCadena(sucId, appId){
-  // Con módulos, el soporte arranca después de la última capacitación de la aplicación
-  const caps = TAREAS.filter(t => t.suc === sucId && t.app === appId && (t.etapa || 'cap') === 'cap' && conFecha(t));
-  const sop = tareaEtapa(sucId, 'sop', appId);
-  const seg = tareaEtapa(sucId, 'seg', appId);
-  if (!caps.length){
+function recalcCadena(sucId, pista){
+  // Cada fila lleva su propia cadena: capacitación → soporte → seguimiento
+  const cap = tareaDe(sucId, pista);
+  const sop = tareaEtapa(sucId, 'sop', pista);
+  const seg = tareaEtapa(sucId, 'seg', pista);
+  if (!cap || !conFecha(cap)){
     [sop, seg].forEach(t => { if (t && !t.manual){ t.ini = ''; t.fin = ''; } });
     return 0;
   }
   if (sop && !sop.manual){
-    const ini = sigHabil(Math.max(...caps.map(t => s2d(t.fin))));
+    const ini = sigHabil(s2d(cap.fin));
     sop.ini = d2s(ini);
     sop.fin = d2s(finHabiles(ini, ETAPAS.sop.dur));
   }
@@ -1267,8 +1264,8 @@ function moverTarea(id, valor){
   if (!valor){                       // se borró la fecha: toda la cadena queda en blanco
     t.ini = ''; t.fin = '';
     if ((t.etapa || 'cap') !== 'cap') delete t.manual;   // vuelve a calcularse solo
-    recalcCadena(t.suc, t.app);
-    guardar(); guardarCadena(t.suc, t.app); render(); pintarFechas();
+    recalcCadena(t.suc, pistaDe(t));
+    guardar(); guardarCadena(t.suc, pistaDe(t)); render(); pintarFechas();
     toast(`${sucNom(t.suc)} · ${app(t.app).nom}: sin fecha`);
     return;
   }
@@ -1278,9 +1275,9 @@ function moverTarea(id, valor){
   t.ini = valor;
   t.fin = d2s(addD(s2d(valor), dur));
   if (et !== 'cap') t.manual = true;      // fecha puesta a mano: deja de recalcularse
-  recalcCadena(t.suc, t.app);
-  guardar(); guardarCadena(t.suc, t.app); render(); pintarFechas();
-  const sop = tareaEtapa(t.suc, 'sop', t.app);
+  recalcCadena(t.suc, pistaDe(t));
+  guardar(); guardarCadena(t.suc, pistaDe(t)); render(); pintarFechas();
+  const sop = tareaEtapa(t.suc, 'sop', pistaDe(t));
   toast(`${sucNom(t.suc)} · ${app(t.app).nom}: ${fmt(t.ini)}` + (conFecha(sop) ? ` · soporte ${fmt(sop.ini)}` : ''));
 }
 
