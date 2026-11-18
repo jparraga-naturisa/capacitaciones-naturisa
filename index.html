@@ -191,7 +191,10 @@ tr.secc b{ margin-left:8px; font-size:11px; }
 #fcTabla .calc{ display:flex; align-items:center; gap:5px; font-size:10.5px; color:var(--muted); margin-top:3px; margin-left:1px; white-space:nowrap; }
 #fcTabla .calc.ok{ color:var(--success); font-weight:600; }
 #fcTabla .calc.atr{ color:var(--danger); font-weight:600; }
-#fcTabla .calc.vacia{ opacity:.45; padding-left:18px; }
+#fcTabla .calc.vacia{ opacity:.6; }
+#fcTabla .calc b{ font-size:10px; font-weight:800; min-width:22px; }
+#fcTabla input[type=date].mini{ width:104px; padding:3px 5px; font-size:11px; }
+#fcTabla input[type=date].manual{ border-color:var(--primary-light); background:#f3f7fb; }
 #fcTabla input.hecho.mini{ width:12px; height:12px; }
 #fcTabla td{ vertical-align:top; }
 #fcTabla input.hecho{ width:15px; height:15px; accent-color:var(--success); cursor:pointer; flex:0 0 auto; }
@@ -369,7 +372,7 @@ tr.secc b{ margin-left:8px; font-size:11px; }
         <div class="search" style="flex:0 1 200px;">
           <input type="text" id="fcQ" placeholder="Buscar sucursal…" oninput="pintarFechas()">
         </div>
-        <span class="sub" style="flex:1">Solo se edita el día de la capacitación: el soporte (5 días) y el seguimiento (5 días) se calculan solos.</span>
+        <span class="sub" style="flex:1">El soporte y el seguimiento se calculan desde la capacitación, pero puedes cambiarles la fecha; si la borras, vuelven a calcularse.</span>
         <button class="btn ghost sm" onclick="exportarExcel()">Excel</button>
         <button class="btn ghost sm" onclick="exportarJSON()">Respaldo</button>
         <button class="btn ghost sm" onclick="document.getElementById('imp').click()">Restaurar</button>
@@ -470,8 +473,30 @@ const LUGARES_EXTRA = [{ id:'__matriz', nom:'Matriz / oficina' }, { id:'__virtua
 const APPS_BASE = [
   { id:'par', nom:'Parámetros',     color:'#2d6a9f' },
   { id:'cos', nom:'Cosecha Diaria', color:'#00b4d8' },
-  { id:'com', nom:'Combustible',    color:'#f59e0b' },
+  // Combustible se capacita módulo a módulo: cada uno lleva su propia fecha y su avance
+  { id:'com', nom:'Combustible',    color:'#f59e0b', mods:[
+      { id:'rec', nom:'Recepción',     color:'#f59e0b' },
+      { id:'tra', nom:'Transferencia', color:'#ea8c0c' },
+      { id:'des', nom:'Despacho',      color:'#d97706' },
+      { id:'bom', nom:'Bomberos',      color:'#b45309' },
+  ] },
 ];
+
+/* Pistas de capacitación: una por aplicación, o una por módulo si la aplicación los tiene.
+   Es lo que ordena el cronograma, las columnas de Configuración y las casillas de Asistentes. */
+function pistas(){
+  const out = [];
+  APPS.forEach(a => (a.mods && a.mods.length ? a.mods : [null]).forEach(m => out.push({
+    key: m ? `${a.id}:${m.id}` : a.id,
+    app: a.id, mod: m ? m.id : null,
+    nom: m ? m.nom : a.nom,
+    grupo: m ? a.nom : '',
+    color: m ? (m.color || a.color) : a.color,
+  })));
+  return out;
+}
+const pistaNom = k => { const p = pistas().find(x => x.key === k); return p ? (p.grupo ? `${p.grupo} · ${p.nom}` : p.nom) : '—'; };
+const pistaDe = t => t.mod ? `${t.app}:${t.mod}` : t.app;
 /* En cada visita se capacitan las tres aplicaciones el mismo día, y cada una arrastra
    su propio soporte (5 días hábiles) y su seguimiento (otros 5), que se calculan solos. */
 const POR_DIA = 2;                  // sucursales por día
@@ -544,7 +569,13 @@ const finHabiles = (ini, n) => { let f = ini; for (let i = 1; i < n; i++) f = si
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 /* ══════════════ Catálogos ══════════════ */
-const app = id => APPS.find(a => a.id === id) || { nom:'—', color:'#94a3b8' };
+const app = id => {
+  const k = String(id || '');
+  const base = APPS.find(a => a.id === k.split(':')[0]);
+  if (!base) return { nom:k === 'com' ? 'Combustible' : '—', color:'#94a3b8' };
+  const m = k.includes(':') && (base.mods || []).find(x => x.id === k.split(':')[1]);
+  return m ? { nom:`${base.nom} · ${m.nom}`, color:m.color || base.color } : base;
+};
 const suc = id => SUCS.find(s => s.id === id) || null;
 const sucNom = id => id == null ? 'Todas las sucursales' : (suc(+id)?.nom || 'Sucursal ' + id);
 const sucCl  = id => id == null ? 'General' : (suc(+id)?.cluster || 'Sin cluster');
@@ -571,9 +602,12 @@ function planBase(){
       const cfg = ARRANQUE[a.id] || { aud:'Todos', resp:'Producción' };
       // Sin fechas: las pone el usuario en Configuración y de ahí salen el soporte y el seguimiento
       const base = { app:a.id, suc:s.id, tipo:'tarea', pct:0, not:'', aud:cfg.aud, ini:'', fin:'' };
-      T.push({ ...base, id:`${a.id}-s${s.id}`,     etapa:'cap', nom:etapaNom('cap'), resp:cfg.resp });
-      T.push({ ...base, id:`${a.id}-sop-s${s.id}`, etapa:'sop', nom:etapaNom('sop'), resp:'Sistemas' });
-      T.push({ ...base, id:`${a.id}-seg-s${s.id}`, etapa:'seg', nom:etapaNom('seg'), resp:'Sistemas' });
+      const mods = a.mods && a.mods.length ? a.mods : [null];
+      mods.forEach(m => T.push({ ...base, mod:m ? m.id : null,
+        id:m ? `${a.id}-${m.id}-s${s.id}` : `${a.id}-s${s.id}`,
+        etapa:'cap', nom:etapaNom('cap'), resp:cfg.resp }));
+      T.push({ ...base, mod:null, id:`${a.id}-sop-s${s.id}`, etapa:'sop', nom:etapaNom('sop'), resp:'Sistemas' });
+      T.push({ ...base, mod:null, id:`${a.id}-seg-s${s.id}`, etapa:'seg', nom:etapaNom('seg'), resp:'Sistemas' });
     });
   });
   return T;
@@ -608,7 +642,8 @@ function grupos(vis){
       const ts = vis.filter(t => t.app === a.id);
       if (ts.length){
         const h = ts.filter(t => (t.pct||0) >= 100).length;
-        gs.push({ id:a.id, nom:a.nom, color:a.color, sub:`${h} de ${ts.length} actividades hechas`, ts });
+        const nm = a.mods && a.mods.length ? `${a.nom} · ${a.mods.length} módulos` : a.nom;
+        gs.push({ id:a.id, nom:nm, color:a.color, sub:`${h} de ${ts.length} actividades hechas`, ts });
       }
     });
     const sinApp = vis.filter(t => !t.app);
@@ -720,21 +755,26 @@ function marcoTiempo(){
 function cuerpoResumen(m, vis){
   const { x, px } = m;
 
-  // Tres líneas por aplicación: capacitación, soporte y seguimiento
-  const pistas = [];
-  APPS.forEach(a => ['cap','sop','seg'].forEach(k => pistas.push({
-    nom:k === 'cap' ? a.nom : etapaNom(k),
-    sub:k === 'cap' ? 'Capacitación' : a.nom,
-    color:a.color, tenue:k !== 'cap', etapa:k,
-    ts:vis.filter(t => (t.etapa || 'cap') === k && t.app === a.id) })));
+  // Una línea por pista de capacitación (módulo a módulo donde los hay), más el
+  // soporte y el seguimiento de cada aplicación.
+  const lineas = [];
+  APPS.forEach(a => {
+    pistas().filter(p => p.app === a.id).forEach(p => lineas.push({
+      nom:p.nom, sub:p.grupo ? `Capacitación · ${p.grupo}` : 'Capacitación',
+      color:p.color, tenue:false, etapa:'cap',
+      ts:vis.filter(t => (t.etapa || 'cap') === 'cap' && pistaDe(t) === p.key) }));
+    ['sop','seg'].forEach(k => lineas.push({
+      nom:etapaNom(k), sub:a.nom, color:a.color, tenue:true, etapa:k,
+      ts:vis.filter(t => (t.etapa || 'cap') === k && t.app === a.id) }));
+  });
   // Actividades sueltas sin aplicación, si alguien las creó
   ['cap','sop','seg'].forEach(k => {
     const ts = vis.filter(t => (t.etapa || 'cap') === k && !t.app);
-    if (ts.length) pistas.push({ nom:etapaNom(k), sub:'sin aplicación', color:'#64748b', etapa:k, ts });
+    if (ts.length) lineas.push({ nom:etapaNom(k), sub:'sin aplicación', color:'#64748b', etapa:k, ts });
   });
 
   let lh = '', rh = '', nFilas = 0;
-  pistas.forEach(pi => {
+  lineas.forEach(pi => {
     const ts = pi.ts;
     if (!ts.length) return;
     nFilas++;
@@ -825,7 +865,7 @@ function cuerpoDetalle(m, vis){
       const x1 = x(s2d(t.ini)), x2 = hito ? x1 + px : x(s2d(t.fin)) + px;
       const sub = MODO === 'app'
         ? `${esc(sucNom(t.suc))}${t.suc != null ? ' · ' + esc(sucCl(t.suc)) : ''}`
-        : ((t.etapa || 'cap') === 'cap' ? esc(a.nom) : 'Todas las aplicaciones');
+        : ((t.etapa || 'cap') === 'cap' ? esc(pistaNom(pistaDe(t))) : esc(a.nom));
       lh += `<div class="lrow ${SEL === t.id ? 'sel' : ''}" onclick="abrir('${t.id}')" title="Clic para editar">
                <span class="ind"></span>
                <span class="nm">${esc(t.nom)}<small>${sub} · ${hito ? fmt(t.ini) : fmt(t.ini) + ' → ' + fmt(t.fin)}</small></span>
@@ -1101,6 +1141,19 @@ async function cargarDeD1(){
   const enD1 = new Set();
   filas.forEach(f => { porId.set(f.id, deFilaPlan(f)); enD1.add(f.id); });
   TAREAS = [...porId.values()];
+  // Combustible pasó a capacitarse módulo a módulo: la fila antigua sin módulo se retira
+  // (si tenía fecha, se la queda el primer módulo para no perderla).
+  const conMods = APPS.filter(a => a.mods && a.mods.length).map(a => a.id);
+  const viejas = TAREAS.filter(t => (t.etapa || 'cap') === 'cap' && !t.mod && conMods.includes(t.app));
+  viejas.forEach(v => {
+    if (conFecha(v)){
+      const prim = pistas().find(p => p.app === v.app);
+      const dest = TAREAS.find(t => t.suc === v.suc && (t.etapa || 'cap') === 'cap' && pistaDe(t) === prim.key);
+      if (dest && !conFecha(dest)){ dest.ini = v.ini; dest.fin = v.fin; dest.pct = v.pct || 0; }
+    }
+    TAREAS = TAREAS.filter(t => t.id !== v.id);
+    if (enD1.has(v.id)) borrarActividadD1(v.id);
+  });
   const faltan = TAREAS.filter(t => !enD1.has(t.id));
   if (faltan.length) guardarActividades(faltan);
   ASIS = Array.isArray(j.asistentes) ? j.asistentes.map(deFilaAsis) : [];
@@ -1133,22 +1186,28 @@ function claseFecha(t){
 function pintarFechas(){
   const q = document.getElementById('fcQ').value.trim().toLowerCase();
   const lista = SUCS.filter(s => !q || (s.nom + ' ' + s.cluster + ' ' + sucCod(s.id)).toLowerCase().includes(q));
-  const cols = ['Sucursal', ...APPS.map(a => a.nom)];
+  const PS = pistas();
+  const cols = ['Sucursal', ...PS.map(p => p.grupo ? `${p.grupo}: ${p.nom}` : p.nom)];
 
   const filas = lista.map(s => {
     // Una columna por aplicación: la fecha de capacitación se edita; soporte y seguimiento
     // se calculan solos y solo se muestran.
-    const celda = a => {
-      const t = tareaDe(s.id, a.id);
+    // Cada columna es una pista: la fecha de su capacitación. El soporte y el seguimiento
+    // son de la aplicación y salen bajo su primera pista; se calculan solos pero se pueden editar.
+    const celda = pi => {
+      const t = TAREAS.find(x => x.suc === s.id && (x.etapa || 'cap') === 'cap' && pistaDe(x) === pi.key);
       if (!t) return `<td><span class="sub">—</span></td>`;
-      const sop = tareaEtapa(s.id, 'sop', a.id), seg = tareaEtapa(s.id, 'seg', a.id);
+      const primera = PS.find(x => x.app === pi.app).key === pi.key;
+      const sop = primera ? tareaEtapa(s.id, 'sop', pi.app) : null;
+      const seg = primera ? tareaEtapa(s.id, 'seg', pi.app) : null;
       const linea = (x, et) => !x ? ''
-        : !conFecha(x)
-          ? `<span class="calc vacia">${et} —</span>`
-          : `<span class="calc ${claseFecha(x)}" title="Se calcula desde la capacitación">
-               <input type="checkbox" class="hecho mini" ${(x.pct||0) >= 100 ? 'checked' : ''}
-                      title="Marcar como completa" onchange="marcarHecho('${x.id}', this.checked)">
-               ${et} ${fmt(x.ini)} – ${fmt(x.fin)}</span>`;
+        : `<span class="calc ${claseFecha(x)} ${conFecha(x) ? '' : 'vacia'}">
+             <input type="checkbox" class="hecho mini" ${(x.pct||0) >= 100 ? 'checked' : ''} ${conFecha(x) ? '' : 'disabled'}
+                    title="Marcar como completa" onchange="marcarHecho('${x.id}', this.checked)">
+             <b>${et}</b>
+             <input type="date" class="mini ${x.manual ? 'manual' : ''}" value="${x.ini || ''}"
+                    title="${x.manual ? 'Fecha puesta a mano. Bórrala para que vuelva a calcularse' : 'Se calcula desde la capacitación; puedes cambiarla'}"
+                    onchange="moverTarea('${x.id}', this.value)"></span>`;
       return `<td><div class="fcel">
           <input type="checkbox" class="hecho" ${(t.pct||0) >= 100 ? 'checked' : ''}
                  title="Marcar la capacitación como completa" onchange="marcarHecho('${t.id}', this.checked)">
@@ -1158,7 +1217,7 @@ function pintarFechas(){
     };
     return `<tr>
         <td class="suc"><span class="cod">${esc(sucCod(s.id))}</span>${esc(s.nom)}<small>${esc(s.cluster)}</small></td>
-        ${APPS.map(celda).join('')}
+        ${PS.map(celda).join('')}
       </tr>`;
   }).join('');
 
@@ -1171,20 +1230,20 @@ function pintarFechas(){
 /* Cada aplicación va seguida en el campamento: capacitación → soporte (5 días) →
    seguimiento (5 días). Las dos últimas se calculan solas a partir de la capacitación. */
 function recalcCadena(sucId, appId){
-  const cap = TAREAS.find(t => t.suc === sucId && t.app === appId && (t.etapa || 'cap') === 'cap');
+  // Con módulos, el soporte arranca después de la última capacitación de la aplicación
+  const caps = TAREAS.filter(t => t.suc === sucId && t.app === appId && (t.etapa || 'cap') === 'cap' && conFecha(t));
   const sop = tareaEtapa(sucId, 'sop', appId);
   const seg = tareaEtapa(sucId, 'seg', appId);
-  // Sin día de capacitación, el soporte y el seguimiento se quedan en blanco
-  if (!cap || !conFecha(cap)){
-    [sop, seg].forEach(t => { if (t){ t.ini = ''; t.fin = ''; } });
+  if (!caps.length){
+    [sop, seg].forEach(t => { if (t && !t.manual){ t.ini = ''; t.fin = ''; } });
     return 0;
   }
-  if (sop){
-    const ini = sigHabil(s2d(cap.fin));
+  if (sop && !sop.manual){
+    const ini = sigHabil(Math.max(...caps.map(t => s2d(t.fin))));
     sop.ini = d2s(ini);
     sop.fin = d2s(finHabiles(ini, ETAPAS.sop.dur));
   }
-  if (sop && seg){
+  if (sop && conFecha(sop) && seg && !seg.manual){
     const ini = sigHabil(s2d(sop.fin));
     seg.ini = d2s(ini);
     seg.fin = d2s(finHabiles(ini, ETAPAS.seg.dur));
@@ -1207,14 +1266,18 @@ function moverTarea(id, valor){
   if (!t) return;
   if (!valor){                       // se borró la fecha: toda la cadena queda en blanco
     t.ini = ''; t.fin = '';
+    if ((t.etapa || 'cap') !== 'cap') delete t.manual;   // vuelve a calcularse solo
     recalcCadena(t.suc, t.app);
     guardar(); guardarCadena(t.suc, t.app); render(); pintarFechas();
     toast(`${sucNom(t.suc)} · ${app(t.app).nom}: sin fecha`);
     return;
   }
-  const dur = conFecha(t) ? Math.round((s2d(t.fin) - s2d(t.ini))/DAY) : 0;
+  const et = t.etapa || 'cap';
+  const dur = conFecha(t) ? Math.round((s2d(t.fin) - s2d(t.ini))/DAY)
+            : (et === 'sop' ? ETAPAS.sop.dur + 2 : et === 'seg' ? ETAPAS.seg.dur + 2 : 0);
   t.ini = valor;
   t.fin = d2s(addD(s2d(valor), dur));
+  if (et !== 'cap') t.manual = true;      // fecha puesta a mano: deja de recalcularse
   recalcCadena(t.suc, t.app);
   guardar(); guardarCadena(t.suc, t.app); render(); pintarFechas();
   const sop = tareaEtapa(t.suc, 'sop', t.app);
@@ -1240,13 +1303,13 @@ function pintarSelectoresAsis(){
   // las casillas se repintan solo si cambió el catálogo de aplicaciones, para no perder lo marcado
   const marcadas = aApps.children.length
     ? [...aApps.querySelectorAll('input:checked')].map(c => c.value)
-    : ((ses && ses.apps) || APPS.map(a => a.id));
-  const firma = APPS.map(a => a.id).join(',');
+    : ((ses && ses.apps) || pistas().map(p => p.key));
+  const firma = pistas().map(p => p.key).join(',');
   if (aApps.dataset.apps !== firma){
-    aApps.innerHTML = APPS.map(a => `<label class="${marcadas.includes(a.id) ? 'on' : ''}">
-        <input type="checkbox" value="${esc(a.id)}" ${marcadas.includes(a.id) ? 'checked' : ''}
+    aApps.innerHTML = pistas().map(p => `<label class="${marcadas.includes(p.key) ? 'on' : ''}" title="${esc(pistaNom(p.key))}">
+        <input type="checkbox" value="${esc(p.key)}" ${marcadas.includes(p.key) ? 'checked' : ''}
                onchange="this.parentNode.classList.toggle('on', this.checked); guardarSesion(); pintarAsis()">
-        <i style="background:${a.color}"></i>${esc(a.nom)}</label>`).join('');
+        <i style="background:${p.color}"></i>${esc(p.nom)}</label>`).join('');
     aApps.dataset.apps = firma;
   }
   aSuc.innerHTML = opcionesSuc(null, false) + LUGARES_EXTRA.map(l => `<option value="${l.id}">${esc(l.nom)}</option>`).join('');
